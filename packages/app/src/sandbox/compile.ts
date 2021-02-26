@@ -13,9 +13,11 @@ import initializeErrorTransformers from 'sandbox-hooks/errors/transformers';
 import { inject, unmount } from 'sandbox-hooks/react-error-overlay/overlay';
 import { Module } from 'sandpack-core/lib/types/module';
 import * as metrics from '@codesandbox/common/lib/utils/metrics';
+import { NpmRegistry } from '@codesandbox/common/lib/types';
 import { Manager, TranspiledModule } from 'sandpack-core';
 
 import { loadDependencies, NPMDependencies } from 'sandpack-core/lib/npm';
+import { NpmRegistryFetcher } from 'sandpack-core/lib/npm/dynamic/fetch-protocols/npm-registry';
 import { consumeCache, deleteCache, saveCache } from './cache';
 import {
   evalBoilerplates,
@@ -293,15 +295,13 @@ function getDependencies(
   // packager will only include the package.json for it.
   if (isBabel7(d, devDependencies)) {
     returnedDependencies['@babel/runtime'] =
-      returnedDependencies['@babel/runtime'] || '7.3.1';
+      returnedDependencies['@babel/runtime'] || '7.12.18';
   } else {
     returnedDependencies['babel-runtime'] =
       returnedDependencies['babel-runtime'] || '6.26.0';
   }
 
-  // This is used for cache busting
-  returnedDependencies.csbbust = '1.0.0';
-  returnedDependencies['node-libs-browser'] = '2.2.0';
+  returnedDependencies['node-libs-browser'] = '2.2.1';
 
   preinstalledDependencies.forEach(dep => {
     if (returnedDependencies[dep]) {
@@ -316,16 +316,20 @@ const cacheProvider = new MergedCacheProvider([
   new IndexedDBCacheProvider(),
   new APICacheProvider(),
 ]);
-function initializeManager(
+
+async function initializeManager(
   sandboxId: string,
   template: TemplateType,
   modules: { [path: string]: Module },
   configurations: ParsedConfigurationFiles,
-  { hasFileResolver = false }: { hasFileResolver?: boolean } = {}
+  {
+    hasFileResolver = false,
+    customNpmRegistries = [],
+  }: { hasFileResolver?: boolean; customNpmRegistries?: NpmRegistry[] } = {}
 ) {
-  return new Manager(
+  const newManager = new Manager(
     sandboxId,
-    getPreset(template, configurations.package.parsed),
+    await getPreset(template, configurations.package.parsed),
     modules,
     {
       hasFileResolver,
@@ -333,6 +337,30 @@ function initializeManager(
       cacheProvider,
     }
   );
+
+  // Add the custom registered npm registries
+  customNpmRegistries.forEach(registry => {
+    const cleanUrl = registry.registryUrl.replace(/\/$/, '');
+
+    const options = registry.limitToScopes
+      ? {
+          scopeWhitelist: registry.enabledScopes,
+          // With our custom proxy on the server we want to handle downloading
+          // the tarball. So we proxy it.
+          provideTarballUrl: (name: string, version: string) =>
+            `${cleanUrl}/${name.replace('/', '%2f')}/${version}`,
+        }
+      : {};
+
+    const protocol = new NpmRegistryFetcher(cleanUrl, options);
+
+    newManager.prependNpmProtocolDefinition({
+      protocol,
+      condition: protocol.condition,
+    });
+  });
+
+  return newManager;
 }
 
 async function updateManager(
@@ -365,10 +393,7 @@ function sendResize() {
 
   if (lastHeight !== height) {
     if (document.body) {
-      dispatch({
-        type: 'resize',
-        height,
-      });
+      dispatch({ type: 'resize', height });
     }
   }
 
@@ -401,6 +426,7 @@ inject();
 interface CompileOptions {
   sandboxId: string;
   modules: { [path: string]: Module };
+  customNpmRegistries?: NpmRegistry[];
   externalResources: string[];
   hasActions?: boolean;
   isModuleView?: boolean;
@@ -417,6 +443,7 @@ async function compile({
   sandboxId,
   modules,
   externalResources,
+  customNpmRegistries = [],
   hasActions,
   isModuleView = false,
   template,
@@ -436,7 +463,7 @@ async function compile({
     }
   }
 
-  dispatch({ type: 'start' });
+  dispatch({ type: 'start', firstLoad });
   metrics.measure('compilation');
 
   const startTime = Date.now();
@@ -489,9 +516,10 @@ async function compile({
 
     manager =
       manager ||
-      initializeManager(sandboxId, template, modules, configurations, {
+      (await initializeManager(sandboxId, template, modules, configurations, {
         hasFileResolver,
-      });
+        customNpmRegistries,
+      }));
 
     let dependencies: NPMDependencies = getDependencies(
       parsedPackageJSON,
@@ -549,7 +577,7 @@ async function compile({
       // Just reset the whole manager if it's a new combination
       manager.dispose();
 
-      manager = initializeManager(
+      manager = await initializeManager(
         sandboxId,
         template,
         modules,
@@ -613,7 +641,8 @@ async function compile({
         if (
           firstLoad &&
           localStorage.getItem('running') &&
-          Date.now() - +localStorage.getItem('running') > 8000
+          Date.now() - +localStorage.getItem('running') > 8000 &&
+          !process.env.SANDPACK
         ) {
           localStorage.removeItem('running');
           showRunOnClick();
@@ -652,9 +681,15 @@ async function compile({
         // preferred.
         const serverProvidedHTML =
           modules[htmlEntries[0]] || manager.preset.htmlDisabled;
-        if (!serverProvidedHTML || !firstLoad || process.env.LOCAL_SERVER) {
+        if (
+          !serverProvidedHTML ||
+          !firstLoad ||
+          process.env.LOCAL_SERVER ||
+          process.env.SANDPACK
+        ) {
           // The HTML is loaded from the server as a static file, no need to set the innerHTML of the body
-          // on the first run.
+          // on the first run. However, if there's no server to provide the static file (in the case of a local server
+          // or sandpack), then do it anyways.
           document.body.innerHTML = body;
         }
         lastBodyHTML = body;

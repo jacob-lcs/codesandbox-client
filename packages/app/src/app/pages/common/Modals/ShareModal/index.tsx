@@ -151,8 +151,8 @@ export const ShareModal: React.FC<Props> = () => {
         <Collapsible title="Embed" defaultOpen>
           <Element paddingX={4}>
             <Text block variant="muted">
-              Customize the embed to better integrate dwith your website, blog
-              or documentation{' '}
+              Customize the embed to better integrate with your website, blog or
+              documentation{' '}
             </Text>
             <Element
               marginTop={4}
@@ -274,7 +274,7 @@ export const ShareModal: React.FC<Props> = () => {
                   maxHeight: 300,
                   overflow: 'auto',
                   '> div > div[class*="FileContainer"]': {
-                    paddingLeft: 0,
+                    paddingLeft: '12px',
                   },
                 })}
               >

@@ -7,6 +7,7 @@ import { Action, AsyncAction } from 'app/overmind';
 import { withOwnedSandbox } from 'app/overmind/factories';
 import getItems from 'app/overmind/utils/items';
 import { json } from 'overmind';
+import { SearchResults } from './state';
 
 export const valueChanged: Action<{
   field: string;
@@ -478,11 +479,10 @@ export const clearExplorerDependencies: Action = ({ state }) => {
   state.workspace.explorerDependencies = [];
 };
 
-export const getDependencies: AsyncAction<string | void> = async (
+export const getDependencies: AsyncAction<string> = async (
   { state, effects },
   value
 ) => {
-  if (value === undefined) return;
   state.workspace.loadingDependencySearch = true;
   const searchResults = await effects.algoliaSearch.searchDependencies(value);
 
@@ -495,10 +495,12 @@ export const setSelectedDependencies: Action<Dependency> = (
   dependency
 ) => {
   const selectedDependencies = state.workspace.selectedDependencies;
+  const versionMap = state.workspace.hitToVersionMap;
   const dep = json(dependency);
 
   if (selectedDependencies[dep.objectID]) {
     delete selectedDependencies[dep.objectID];
+    delete versionMap[dep.objectID];
   } else {
     selectedDependencies[dep.objectID] = dep;
   }
@@ -508,6 +510,21 @@ export const handleVersionChange: Action<{
   dependency: Dependency;
   version: string;
 }> = ({ state }, { dependency, version }) => {
+  if (state.editor.parsedConfigurations?.package?.parsed?.dependencies) {
+    const installedVersion =
+      state.editor.parsedConfigurations.package.parsed.dependencies[
+        dependency.objectID
+      ];
+
+    /* Remove the dependency as the same version is already installed */
+    if (installedVersion === version) {
+      const selectedDependencies = state.workspace.selectedDependencies;
+      const versionMap = state.workspace.hitToVersionMap;
+      delete selectedDependencies[dependency.objectID];
+      delete versionMap[dependency.objectID];
+      return;
+    }
+  }
   state.workspace.hitToVersionMap[dependency.objectID] = version;
 };
 
@@ -518,4 +535,65 @@ export const clearSelectedDependencies: Action = ({ state }) => {
 export const toggleShowingSelectedDependencies: Action = ({ state }) => {
   state.workspace.showingSelectedDependencies = !state.workspace
     .showingSelectedDependencies;
+};
+
+export const sandboxAlwaysOnChanged: AsyncAction<{
+  alwaysOn: boolean;
+}> = async ({ actions, effects, state }, { alwaysOn }) => {
+  if (!state.editor.currentSandbox) {
+    return;
+  }
+
+  track('Sandbox - Always On', { alwaysOn });
+
+  const oldAlwaysOn = state.editor.currentSandbox.alwaysOn;
+  state.editor.currentSandbox.alwaysOn = alwaysOn;
+
+  try {
+    await effects.gql.mutations.changeSandboxAlwaysOn({
+      sandboxId: state.editor.currentSandbox.id,
+      alwaysOn,
+    });
+  } catch (error) {
+    state.editor.currentSandbox.alwaysOn = oldAlwaysOn;
+
+    // this is odd to handle it in the action
+    // TODO: we need a cleaner way to read graphql errors
+    const message = error.response?.errors[0]?.message;
+
+    actions.internal.handleError({
+      message: "We weren't able to update always on status",
+      error: { name: 'Always on', message },
+    });
+  }
+};
+
+export const searchValueChanged: Action<string> = ({ state }, value) => {
+  state.workspace.searchValue = value;
+};
+
+export const filesToIncludeChanged: Action<string> = ({ state }, value) => {
+  state.workspace.searchOptions.filesToInclude = value;
+};
+
+export const filesToExcludeChanged: Action<string> = ({ state }, value) => {
+  state.workspace.searchOptions.filesToExclude = value;
+};
+
+export const openResult: Action<number> = ({ state }, id) => {
+  state.workspace.searchResults[id].open = !state.workspace.searchResults[id]
+    .open;
+};
+
+export const searchResultsChanged: Action<SearchResults> = (
+  { state },
+  results
+) => {
+  state.workspace.searchResults = results;
+};
+
+export const searchOptionsToggled: Action<string> = ({ state }, option) => {
+  state.workspace.searchOptions[option] = !state.workspace.searchOptions[
+    option
+  ];
 };
