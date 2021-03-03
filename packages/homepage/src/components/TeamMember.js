@@ -16,6 +16,7 @@ import alex from '../assets/images/people/alex.jpg';
 import maurice from '../assets/images/people/maurice.jpg';
 import zeh from '../assets/images/people/zeh.png';
 import ceora from '../assets/images/people/ceora.jpg';
+import scott from '../assets/images/people/scott.png';
 
 const people = [
   {
@@ -107,6 +108,12 @@ const people = [
     pic: ceora,
     color: '#97c8d6',
     team: 'Growth',
+  },
+  {
+    name: 'Scott Hutcheson',
+    pic: scott,
+    color: '#F24E62',
+    team: 'Engineering',
   },
 ];
 
